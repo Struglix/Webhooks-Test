@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Discord Auto "hi"</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 16px; background: #1e1f22; color: #dbdee1; }
+  h1 { font-size: 20px; }
+  .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  label { font-size: 13px; opacity: .8; display: block; margin-top: 8px; }
+  input, textarea, button, select { width: 100%; box-sizing: border-box; margin: 6px 0; padding: 10px; border-radius: 8px; border: 1px solid #3f4147; background: #1e1f22; color: #dbdee1; font-size: 14px; }
+  button { cursor: pointer; font-weight: 600; border: none; }
+  .primary { background: #5865f2; color: white; }
+  .danger { background: #da373c; color: white; }
+  .muted { background: #3f4147; color: #dbdee1; }
+  #status { font-size: 13px; margin-top: 12px; opacity: .85; white-space: pre-wrap; max-height: 220px; overflow-y: auto; }
+  .hint { font-size: 12px; opacity: .6; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Discord Auto "hi"</h1>
+
+<div class="card">
+  <label>Webhook URL (bot gửi tin)</label>
+  <input id="sendWebhook" type="password" value="https://discord.com/api/webhooks/..." />
+
+  <label>Webhook URL (nhận tin — chỉ cần cho chế độ trả lời)</label>
+  <input id="recvWebhook" type="password" placeholder="https://discord.com/api/webhooks/1566381535211425903/HOdS9xhUbIgsSR_SiXtDEsZS_nyR9Aqkv0wrzDwitWDtDHxeY4BqBMC6I4Q4HH5O00Bz" />
+  <div class="hint">Chế độ "trả lời" cần 1 webhook thứ 2 trỏ vào cùng kênh để đọc tin nhắn đến.</div>
+</div>
+
+<div class="card">
+  <label>Chế độ</label>
+  <select id="mode">
+    <option value="timer">⏱ Mỗi N giây gửi "hi"</option>
+    <option value="reply">💬 Chờ ai nói "hi" thì trả lời "hi"</option>
+  </select>
+
+  <div id="timerBox">
+    <label>Chu kỳ (giây)</label>
+    <input id="interval" type="number" value="5" min="1" />
+  </div>
+
+  <div id="replyBox" style="display:none">
+    <label>Từ khóa cần chờ</label>
+    <input id="keyword" value="hi" />
+    <label>Nội dung trả lời</label>
+    <input id="replyText" value="hi" />
+    <div class="hint">Lưu ý: chỉ bắt được tin nhắn mới trong lúc trang đang mở.</div>
+  </div>
+
+  <button id="toggleBtn" class="primary">▶ BẬT</button>
+  <button id="sendOnce" class="muted">Gửi thử 1 lần</button>
+</div>
+
+<div class="card">
+  <div id="status">Chưa chạy.</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const sendWebhook = $('sendWebhook');
+const recvWebhook = $('recvWebhook');
+const modeSel = $('mode');
+const timerBox = $('timerBox');
+const replyBox = $('replyBox');
+const intervalInput = $('interval');
+const keywordInput = $('keyword');
+const replyText = $('replyText');
+const toggleBtn = $('toggleBtn');
+const statusEl = $('status');
+
+let timer = null;
+let lastSeenId = null; // id tin nhắn cuối cùng đã xử lý
+
+// Lưu cấu hình
+['sendWebhook','recvWebhook','interval','keyword','replyText'].forEach(id => {
+  const el = $(id);
+  const saved = localStorage.getItem('hi_' + id);
+  if (saved !== null) el.value = saved;
+  el.addEventListener('input', () => localStorage.setItem('hi_' + id, el.value));
+});
+modeSel.value = localStorage.getItem('hi_mode') || 'timer';
+modeSel.addEventListener('change', () => {
+  localStorage.setItem('hi_mode', modeSel.value);
+  updateModeUI();
+});
+
+function updateModeUI() {
+  const isTimer = modeSel.value === 'timer';
+  timerBox.style.display = isTimer ? 'block' : 'none';
+  replyBox.style.display = isTimer ? 'none' : 'block';
+}
+updateModeUI();
+
+function log(msg) {
+  statusEl.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + statusEl.textContent;
+}
+
+async function sendMessage(text) {
+  const url = sendWebhook.value.trim();
+  if (!url.startsWith('https://discord.com/api/webhooks/')) {
+    log('❌ Webhook gửi không hợp lệ.');
+    return false;
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: text })
+    });
+    if (res.ok) { log('✅ Đã gửi: ' + text); return true; }
+    log('⚠️ Lỗi HTTP ' + res.status);
+    return false;
+  } catch (e) {
+    log('❌ Lỗi mạng: ' + e.message);
+    return false;
+  }
+}
+
+// ===== CHẾ ĐỘ 1: GỬI MỖI N GIÂY =====
+function startTimer() {
+  const sec = Math.max(1, parseInt(intervalInput.value) || 5);
+  sendMessage('hi');
+  timer = setInterval(() => sendMessage('hi'), sec * 1000);
+  log(`▶ Bật chế độ gửi mỗi ${sec}s.`);
+}
+
+// ===== CHẾ ĐỘ 2: CHỜ "hi" RỒI TRẢ LỜI =====
+let pollTimer = null;
+
+async function pollMessages() {
+  const url = recvWebhook.value.trim();
+  if (!url.startsWith('https://discord.com/api/webhooks/')) {
+    log('❌ Webhook nhận không hợp lệ.');
+    stopReply();
+    return;
+  }
+  try {
+    const endpoint = url + (lastSeenId ? `?after=${lastSeenId}&limit=10` : '?limit=10');
+    const res = await fetch(endpoint);
+    if (!res.ok) { log('⚠️ Đọc tin lỗi HTTP ' + res.status); return; }
+    const msgs = await res.json();
+    if (!Array.isArray(msgs) || msgs.length === 0) return;
+
+    // Discord trả về mới nhất trước → đảo lại để xử lý theo thứ tự
+    msgs.reverse();
+    for (const m of msgs) {
+      if (lastSeenId && m.id <= lastSeenId) continue;
+      lastSeenId = m.id;
+
+      // Bỏ qua tin do chính webhook gửi (tránh tự trả lời chính mình)
+      if (m.webhook_id) continue;
+
+      const content = (m.content || '').toLowerCase().trim();
+      const keyword = keywordInput.value.toLowerCase().trim();
+      if (keyword && content === keyword) {
+        log(`💬 Nhận "${m.content}" từ ${m.author?.username || '?'} → trả lời`);
+        await sendMessage(replyText.value || 'hi');
+      }
+    }
+  } catch (e) {
+    log('❌ Lỗi poll: ' + e.message);
+  }
+}
+
+function startReply() {
+  // Lấy id mới nhất hiện tại để không trả lời tin cũ
+  lastSeenId = null;
+  pollMessages();
+  pollTimer = setInterval(pollMessages, 3000);
+  log('▶ Bật chế độ chờ "hi" (poll mỗi 3s).');
+}
+
+function stopReply() {
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+// ===== ĐIỀU KHIỂN =====
+function isRunning() { return timer !== null || pollTimer !== null; }
+
+function start() {
+  if (isRunning()) return;
+  if (modeSel.value === 'timer') startTimer();
+  else startReply();
+  toggleBtn.textContent = '⏹ TẮT';
+  toggleBtn.className = 'danger';
+}
+
+function stop() {
+  clearInterval(timer); timer = null;
+  stopReply();
+  toggleBtn.textContent = '▶ BẬT';
+  toggleBtn.className = 'primary';
+  log('⏹ Đã tắt.');
+}
+
+toggleBtn.addEventListener('click', () => isRunning() ? stop() : start());
+$('sendOnce').addEventListener('click', () => sendMessage('hi'));
+
+window.addEventListener('beforeunload', e => {
+  if (isRunning()) { e.preventDefault(); e.returnValue = ''; }
+});
+</script>
+
+</body>
+  </html>
